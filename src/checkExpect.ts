@@ -1,3 +1,4 @@
+import { Console } from 'console';
 import {
    Diagnostic,
    DiagnosticMessageChain,
@@ -15,6 +16,7 @@ const defaultConfig = {
    tsConfigFilePath: './tsconfig.json',
    checkTypeName: 'CheckedAny',
    expectTag: 'Check',
+   showValid: false,
 };
 
 async function handleCommandLineArgs() {
@@ -34,6 +36,11 @@ async function handleCommandLineArgs() {
          expectTag: {
             type: 'string',
             description: 'not yet implemented',
+         },
+         showValid: {
+            alias: 'v',
+            type: 'boolean',
+            description: 'Show checks that pass as well',
          },
       })
       .help().argv;
@@ -99,8 +106,10 @@ function check(config: typeof defaultConfig) {
 
             //  console.log({newMessages});
 
+            let passed = true;
             for (const regex of regexes) {
                if (!newMessages.some((msg) => msg.match(regex))) {
+                  passed = false;
                   console.log(`Cast check failed at line ${grandParentLine}`);
                   console.log(
                      '   ' + grandParentText.replaceAll('\n', '\n   ')
@@ -115,6 +124,10 @@ function check(config: typeof defaultConfig) {
                      console.log('> Cast is not needed');
                   }
                }
+            }
+            if (passed && config.showValid) {
+               console.log(`Valid cast at line ${grandParentLine}`);
+               console.log('   ' + grandParentText.replaceAll('\n', '\n   '));
             }
          }
       });
