@@ -1,0 +1,14 @@
+{
+  "name": "check-ts-expect",
+  "version": "0.0.1",
+  "description": "Verify ts-expect-error or casts against the a regex on the error message",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ts-morph": "^20.0.0"
+  }
+}
