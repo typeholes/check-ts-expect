@@ -2,13 +2,18 @@
   "name": "check-ts-expect",
   "version": "0.0.1",
   "description": "Verify ts-expect-error or casts against the a regex on the error message",
-  "main": "index.js",
+  "main": "checkExpect.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "ts-morph": "^20.0.0"
+    "ts-morph": "^20.0.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "@types/yargs": "^17.0.31"
   }
 }
