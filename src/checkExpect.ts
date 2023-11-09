@@ -1,4 +1,3 @@
-import { Console } from 'console';
 import {
    Diagnostic,
    DiagnosticMessageChain,
@@ -10,12 +9,11 @@ import {
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
-type Ignore<T extends string> = any;
-
 const defaultConfig = {
    tsConfigFilePath: './tsconfig.json',
    checkTypeName: 'CheckedAny',
    expectTag: 'Check',
+   checkTypeRegexCount: Number.MAX_SAFE_INTEGER,
    showValid: false,
 };
 
@@ -42,10 +40,17 @@ async function handleCommandLineArgs() {
             type: 'boolean',
             description: 'Show checks that pass as well',
          },
+         checkTypeRegexCount: {
+            alias: 'c',
+            type: 'number',
+            description:
+               'maximum number of regexes to check on casts. useful when the last genereic parameter of your check type is the type to cast to',
+         },
       })
       .help().argv;
 
-   return args;
+   const ret = { ...defaultConfig, ...args };
+   return ret as { [K in keyof typeof ret]: NonNullable<(typeof ret)[K]> };
 }
 
 function check(config: typeof defaultConfig) {
@@ -57,38 +62,56 @@ function check(config: typeof defaultConfig) {
 
    for (const file of project.getSourceFiles()) {
       //    console.log(`file: ${file.getBaseName()}`);
+      file.getStatementsWithComments().forEach((statement) => {
+         const line = statement.getStartLineNumber();
+         const text = statement.getText();
+         if (Node.isCommentNode(statement) && text.match(/@ts-expect-error/)) {
+            console.log(line, text);
+            statement.remove();
+            const diags = getLineDiagnostics(file, line - 1); // why -1?
+            console.log(diags.map(diagToString));
+         }
+      });
+
       file.forEachDescendant((node) => {
          if (Node.isAsExpression(node)) {
             const regexes: RegExp[] = [];
             //  console.log(node.print());
             const typeNode = node.getTypeNode();
-            if (Node.isTypeReference(typeNode)) {
-               const name = typeNode.getTypeName().print();
-               if (name === config.checkTypeName) {
-                  const args = typeNode.getTypeArguments();
-                  for (const arg of args) {
-                     const argStr = arg.print();
-                     if (!Node.isLiteralTypeNode(arg)) {
-                        throw new Error(
-                           `Expected literal type node, got: ${argStr}`
-                        );
-                     }
-                     if (!argStr.match(/^['"].*['"]$/)) {
-                        throw new Error(`expected string arg, got ${argStr}`);
-                     }
-                     //   console.log(arg.print());
-                     regexes.push(new RegExp(argStr.slice(1, -1)));
-                  }
+            if (!Node.isTypeReference(typeNode)) {
+               return;
+            }
+            const typeNodeNewlines = typeNode.print().replaceAll(/[^\n]/g, '');
+            const name = typeNode.getTypeName().print();
+            if (name !== config.checkTypeName) {
+               return;
+            }
+            const args = typeNode
+               .getTypeArguments()
+               .slice(0, config.checkTypeRegexCount);
+            for (let i = 0; i < args.length; i++) {
+               const arg = args[i];
+               const argStr = arg.print();
+               if (!Node.isLiteralTypeNode(arg)) {
+                  throw new Error(`Expected literal type node, got: ${argStr}`);
+               } else if (!argStr.match(/^['"].*['"]$/)) {
+                  throw new Error(`expected string arg, got ${argStr}`);
                }
+               //   console.log(arg.print());
+               regexes.push(new RegExp(argStr.slice(1, -1)));
             }
 
             const tgt = node.getExpression();
+            let expr = tgt;
+            while (Node.isAsExpression(expr)) {
+               expr = expr.getExpression();
+            }
 
             const parent = tgt.getParent() ?? tgt;
             const grandParent = parent.getParent() ?? parent;
             const grandParentText = grandParent.print();
             const grandParentLine = grandParent.getStartLineNumber() ?? 0;
-            const tgtStart = tgt.getParent()?.getParent()?.getStart() ?? 0;
+            const tgtStart = grandParent.getStart() ?? 0;
             const tgtEnd = typeNode?.getStart() ?? 0;
 
             //  console.log(`tgt: ${tgt?.print()}`);
@@ -99,7 +122,7 @@ function check(config: typeof defaultConfig) {
             ).map(diagToString);
             //         console.log({existingMessages});
 
-            node.replaceWithText(tgt.print());
+            node.replaceWithText(expr.print() + typeNodeNewlines);
             const newMessages = getNodeDiagnostics(file, tgtStart, tgtEnd)
                .map(diagToString)
                .filter((x) => !existingMessages.includes(x));
@@ -107,29 +130,43 @@ function check(config: typeof defaultConfig) {
             //  console.log({newMessages});
 
             let passed = true;
-            for (const regex of regexes) {
-               if (!newMessages.some((msg) => msg.match(regex))) {
-                  passed = false;
-                  console.log(`Cast check failed at line ${grandParentLine}`);
-                  console.log(
-                     '   ' + grandParentText.replaceAll('\n', '\n   ')
-                  );
-                  if (newMessages.length > 0) {
+            if (newMessages.length === 0) {
+               console.log(
+                  `\nCast is not needed at line ${grandParentLine} ${file.getFilePath()}`
+               );
+               console.log('   ' + grandParentText.replaceAll('\n', '\n   '));
+            } else {
+               for (const regex of regexes) {
+                  if (!newMessages.some((msg) => msg.match(regex))) {
+                     passed = false;
+                     console.log(
+                        `\nCast check failed at line ${grandParentLine} ${file.getFilePath()}`
+                     );
+                     console.log(
+                        '   ' + grandParentText.replaceAll('\n', '\n   ')
+                     );
                      newMessages.forEach((msg) => {
                         console.log('-'.repeat(30));
                         console.log('| ' + msg.replaceAll('\n', '\n   '));
                      });
                      console.log('-'.repeat(30));
-                  } else {
-                     console.log('> Cast is not needed');
                   }
                }
             }
             if (passed && config.showValid) {
-               console.log(`Valid cast at line ${grandParentLine}`);
+               console.log(
+                  `\nValid cast at line ${grandParentLine} ${file.getFilePath()}`
+               );
                console.log('   ' + grandParentText.replaceAll('\n', '\n   '));
             }
          }
+      });
+   }
+
+   function getLineDiagnostics(file: SourceFile, line: number | undefined) {
+      return file.getPreEmitDiagnostics().filter((diag) => {
+         // console.log( {line: diag.getLineNumber()})
+         return diag.getLineNumber() === line;
       });
    }
 
@@ -163,28 +200,3 @@ function check(config: typeof defaultConfig) {
 }
 
 handleCommandLineArgs().then(check);
-
-function f(n: RegExp) {
-   return 1;
-}
-
-const foo: string = f('a') as Ignore<"'number'.*assignable.*'string'">;
-/** reports nothing */
-
-const bar: string = f('a') as Ignore<"'string'.*assignable.*'string'">;
-/** reports
- * Match not found /'string'.*assignable.*'string'/ [ "Type 'number' is not assignable to type 'string'." ] in
- * bar: string = f('a') as Ignore<"'string'.*assignable.*'string'">
- */
-
-const baz: string = f('a') as Ignore<"'string'.*assignable.*'RegExp'">;
-/** reports
- * Match not found /'string'.*assignable.*'RegExp'/ [ "Type 'number' is not assignable to type 'string'." ] in
- * baz: string = f('a') as Ignore<"'string'.*assignable.*'RegExp'">
- */
-
-const castNotNeeded: number = 1 as Ignore<'.'>;
-/** reports
- * Match not found /./ [] in
- * castNotNeeded: number = 1 as Ignore<'.'>
- */
