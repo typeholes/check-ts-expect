@@ -152,12 +152,12 @@ function check(config: typeof defaultConfig) {
                      console.log('-'.repeat(30));
                   }
                }
-            }
             if (passed && config.showValid) {
                console.log(
                   `\nValid cast at line ${grandParentLine} ${file.getFilePath()}`
                );
                console.log('   ' + grandParentText.replaceAll('\n', '\n   '));
+            }
             }
          }
       });
